@@ -23,9 +23,10 @@ def initialize_database() -> None:
             CREATE TABLE IF NOT EXISTS messages (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 conversation_id TEXT NOT NULL,
-                role TEXT NOT NULL CHECK (role IN ('system', 'user', 'assistant')),
-                content TEXT NOT NULL,
+                role TEXT NOT NULL CHECK (role IN ('system', 'user', 'assistant', 'tool')),
+                content TEXT,
                 created_at TEXT NOT NULL,
+                tool_call_id TEXT,
                 FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
             );
             CREATE INDEX IF NOT EXISTS idx_messages_conversation_id ON messages(conversation_id, id);
@@ -60,20 +61,32 @@ def save_conversation(conversation_id: str, title: str, system_prompt: str, mess
         conn.execute("DELETE FROM messages WHERE conversation_id = ?", (conversation_id,))
         for msg in messages:
             conn.execute("""
-                INSERT INTO messages (conversation_id, role, content, created_at)
-                VALUES (?, ?, ?, ?)
-            """, (conversation_id, msg["role"], msg["content"], updated_at))
+                INSERT INTO messages (conversation_id, role, content, created_at, tool_call_id)
+                VALUES (?, ?, ?, ?, ?)
+            """, (
+                conversation_id,
+                msg.get("role"),
+                msg.get("content"),
+                updated_at,
+                msg.get("tool_call_id"),
+            ))
 
 def load_all_conversations() -> list[dict]:
     with get_connection() as conn:
         rows = conn.execute("SELECT id, title, system_prompt, created_at, updated_at FROM conversations ORDER BY updated_at DESC").fetchall()
         result = []
         for row in rows:
-            msgs = conn.execute("SELECT role, content FROM messages WHERE conversation_id = ? ORDER BY id ASC", (row["id"],)).fetchall()
+            msgs = conn.execute(
+                "SELECT role, content, tool_call_id FROM messages WHERE conversation_id = ? ORDER BY id ASC",
+                (row["id"],),
+            ).fetchall()
             result.append({
                 "conversation_id": row["id"],
                 "title": row["title"],
-                "messages": [{"role": m["role"], "content": m["content"]} for m in msgs],
+                "messages": [
+                    {k: m[k] for k in ("role", "content", "tool_call_id") if m[k] is not None}
+                    for m in msgs
+                ],
                 "created_at": row["created_at"],
                 "updated_at": row["updated_at"],
             })
